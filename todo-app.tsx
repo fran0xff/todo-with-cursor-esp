@@ -1,63 +1,110 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Trash2, Edit3, Save, X, Plus } from "lucide-react"
+import { db } from "@/lib/firebase"
+import {
+  collection,
+  addDoc,
+  deleteDoc,
+  updateDoc,
+  doc,
+  onSnapshot,
+  query,
+  orderBy,
+} from "firebase/firestore"
 
 interface Todo {
-  id: number
+  id: string
   text: string
   completed: boolean
-  isEditing: boolean
+  isEditing?: boolean
 }
 
 export default function TodoApp() {
-  const [todos, setTodos] = useState<Todo[]>([
-    { id: 1, text: "Learn React", completed: false, isEditing: false },
-    { id: 2, text: "Build a todo app", completed: true, isEditing: false },
-    { id: 3, text: "Deploy to production", completed: false, isEditing: false },
-  ])
+  const [todos, setTodos] = useState<Todo[]>([])
   const [newTodo, setNewTodo] = useState("")
   const [editText, setEditText] = useState("")
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
-  const addTodo = () => {
-    if (newTodo.trim() !== "") {
-      const newTask: Todo = {
-        id: Date.now(),
-        text: newTodo.trim(),
-        completed: false,
-        isEditing: false,
+  useEffect(() => {
+    setLoading(true)
+    const q = query(collection(db, "todos"), orderBy("createdAt", "asc"))
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        setTodos(
+          snapshot.docs.map((doc) => ({
+            id: doc.id,
+            ...doc.data(),
+          })) as Todo[]
+        )
+        setLoading(false)
+      },
+      (err) => {
+        setError("Failed to load todos.")
+        setLoading(false)
       }
-      setTodos([...todos, newTask])
-      setNewTodo("")
+    )
+    return () => unsubscribe()
+  }, [])
+
+  const addTodo = async () => {
+    if (newTodo.trim() !== "") {
+      try {
+        await addDoc(collection(db, "todos"), {
+          text: newTodo.trim(),
+          completed: false,
+          createdAt: Date.now(),
+        })
+        setNewTodo("")
+      } catch (err) {
+        setError("Failed to add todo.")
+      }
     }
   }
 
-  const deleteTodo = (id: number) => {
-    setTodos(todos.filter((todo) => todo.id !== id))
+  const deleteTodo = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, "todos", id))
+    } catch (err) {
+      setError("Failed to delete todo.")
+    }
   }
 
-  const toggleComplete = (id: number) => {
-    setTodos(todos.map((todo) => (todo.id === id ? { ...todo, completed: !todo.completed } : todo)))
+  const toggleComplete = async (id: string, completed: boolean) => {
+    try {
+      await updateDoc(doc(db, "todos", id), { completed: !completed })
+    } catch (err) {
+      setError("Failed to update todo.")
+    }
   }
 
-  const startEdit = (id: number, currentText: string) => {
+  const startEdit = (id: string, currentText: string) => {
     setEditText(currentText)
-    setTodos(todos.map((todo) => (todo.id === id ? { ...todo, isEditing: true } : { ...todo, isEditing: false })))
+    setEditingId(id)
   }
 
-  const saveEdit = (id: number) => {
+  const saveEdit = async (id: string) => {
     if (editText.trim() !== "") {
-      setTodos(todos.map((todo) => (todo.id === id ? { ...todo, text: editText.trim(), isEditing: false } : todo)))
-      setEditText("")
+      try {
+        await updateDoc(doc(db, "todos", id), { text: editText.trim() })
+        setEditText("")
+        setEditingId(null)
+      } catch (err) {
+        setError("Failed to update todo.")
+      }
     }
   }
 
-  const cancelEdit = (id: number) => {
-    setTodos(todos.map((todo) => (todo.id === id ? { ...todo, isEditing: false } : todo)))
+  const cancelEdit = () => {
+    setEditingId(null)
     setEditText("")
   }
 
@@ -117,7 +164,11 @@ export default function TodoApp() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {todos.length === 0 ? (
+            {loading ? (
+              <div className="text-center py-8 text-muted-foreground">Loading...</div>
+            ) : error ? (
+              <div className="text-center py-8 text-red-500">{error}</div>
+            ) : todos.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground">
                 <p className="text-lg mb-2">No tasks yet!</p>
                 <p>Add your first task above to get started.</p>
@@ -134,11 +185,11 @@ export default function TodoApp() {
                     <Checkbox
                       id={`todo-${todo.id}`}
                       checked={todo.completed}
-                      onCheckedChange={() => toggleComplete(todo.id)}
+                      onCheckedChange={() => toggleComplete(todo.id, todo.completed)}
                     />
 
                     <div className="flex-1">
-                      {todo.isEditing ? (
+                      {editingId === todo.id ? (
                         <div className="flex gap-2">
                           <Input
                             value={editText}
@@ -147,7 +198,7 @@ export default function TodoApp() {
                               if (e.key === "Enter") {
                                 saveEdit(todo.id)
                               } else if (e.key === "Escape") {
-                                cancelEdit(todo.id)
+                                cancelEdit()
                               }
                             }}
                             className="flex-1"
@@ -156,7 +207,7 @@ export default function TodoApp() {
                           <Button size="sm" onClick={() => saveEdit(todo.id)} disabled={!editText.trim()}>
                             <Save className="h-4 w-4" />
                           </Button>
-                          <Button size="sm" variant="outline" onClick={() => cancelEdit(todo.id)}>
+                          <Button size="sm" variant="outline" onClick={cancelEdit}>
                             <X className="h-4 w-4" />
                           </Button>
                         </div>
@@ -172,7 +223,7 @@ export default function TodoApp() {
                       )}
                     </div>
 
-                    {!todo.isEditing && (
+                    {editingId !== todo.id && (
                       <div className="flex gap-1">
                         <Button
                           size="sm"
